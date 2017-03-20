@@ -111,11 +111,11 @@ vector<vector<Velodyne::Point*> > Velodyne::Velodyne::getRings()
 
 void Velodyne::Velodyne::intensityByRangeDiff()
 {
-  intensityByDiff(Processing::DISTORTIONS);
+  intensityByDiff(DISTORTIONS);
 }
 void Velodyne::Velodyne::intensityByIntensityDiff()
 {
-  intensityByDiff(Processing::INTENSITY_EDGES);
+  intensityByDiff(INTENSITY_EDGES);
 }
 
 void Velodyne::Velodyne::intensityByDiff(Processing processing)
@@ -140,15 +140,15 @@ void Velodyne::Velodyne::intensityByDiff(Processing processing)
 
       switch (processing)
       {
-        case Processing::DISTORTIONS:
+        case DISTORTIONS:
           (*pt)->intensity = MAX( MAX( prev->range-(*pt)->range, succ->range-(*pt)->range), 0) * 10;
           break;
-        case Processing::INTENSITY_EDGES:
+        case INTENSITY_EDGES:
           new_intensity = MAX( MAX( last_intensity-(*pt)->intensity, succ->intensity-(*pt)->intensity), 0) * 10;
           last_intensity = (*pt)->intensity;
           (*pt)->intensity = new_intensity;
           break;
-        case Processing::NONE:
+        case NONE:
           break;
         default:
           throw NotImplementedException("Velodyne processing unknown.");

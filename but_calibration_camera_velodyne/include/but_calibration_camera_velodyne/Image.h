@@ -10,6 +10,15 @@
 
 #include <opencv2/opencv.hpp>
 #include <vector>
+#include <ros/ros.h>
+#include <cv_bridge/cv_bridge.h>
+#include <image_transport/image_transport.h>
+#include <sensor_msgs/image_encodings.h>
+#include <sensor_msgs/PointCloud2.h>
+#include <sensor_msgs/Image.h>
+#include <sensor_msgs/CameraInfo.h>
+#include <camera_info_manager/camera_info_manager.h>
+
 
 namespace but_calibration_camera_velodyne
 {
@@ -33,7 +42,7 @@ public:
   cv::Mat computeIDTEdgeImage();
   cv::Mat computeIDTEdgeImage(cv::Mat &edge_img);
   bool detect4Circles(float canny_thresh, float center_thresh, std::vector<cv::Point2f> &centers,
-                      std::vector<float> &radiuses);
+                      std::vector<float> &radiuses, cv::Mat &circle_img);
   void threshold(int threshold)
   {
     cv::threshold(img, img, threshold, 255, cv::THRESH_TOZERO);
@@ -86,6 +95,8 @@ public:
   // CV_32SC1 Mat with segment indexes
   cv::Mat segmentation(int segments);
 
+  
+  
 protected:
   cv::Mat img;
 

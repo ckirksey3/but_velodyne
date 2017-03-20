@@ -40,7 +40,10 @@ public:
   bool detectCirclesInImage(std::vector<cv::Point2f> &centers, std::vector<float> &radiuses);
 
   bool detectCirclesInPointCloud(std::vector<cv::Point3f> &centers, std::vector<float> &radiuses);
-
+  
+  sensor_msgs::PointCloud2 plane_ros;
+  cv_bridge::CvImage circles_img_msg;
+  
 protected:
   template<typename PointT>
     void remove_inliers(const ::pcl::PointCloud<PointT> &cloud_in, std::vector<int> inliers_indices,
@@ -83,14 +86,17 @@ protected:
   std::vector< ::pcl::PointXYZ > refine4centers(std::vector< ::pcl::PointXYZ > centers,
                                             ::pcl::PointCloud< ::pcl::PointXYZ >::Ptr detection_cloud);
 
+
+  
 protected:
   cv::Mat frame_gray, P;
   ::pcl::PointCloud<Velodyne::Point> pc;
   float circ_distance, radius;
   ::pcl::PointCloud< ::pcl::PointXYZ > plane;
 
-  static const int CANNY_THRESH = 150;
-  static const int CENTER_THRESH_DISTANCE = 80;
+  
+  static const int CANNY_THRESH = 100;
+  static const int CENTER_THRESH_DISTANCE = 20;
 };
 
 };

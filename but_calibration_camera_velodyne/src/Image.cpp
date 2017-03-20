@@ -61,6 +61,8 @@ Mat Image::computeEdgeImage()
   Mat edges;
   Mat grad_x, grad_y;
   Mat abs_grad_x, abs_grad_y;
+  GaussianBlur( grayImg, grayImg, Size(5,5), 0, 0, BORDER_DEFAULT );
+  GaussianBlur( grayImg, grayImg, Size(3,3), 0, 0, BORDER_DEFAULT );
   /// Gradient X
   Sobel(grayImg, grad_x, CV_16S, 1, 0, 3);
   convertScaleAbs(grad_x, abs_grad_x);
@@ -142,7 +144,7 @@ bool order_Y(const Vec3f &p1, const Vec3f &p2)
 {
   return p1.val[1] < p2.val[1];
 }
-bool Image::detect4Circles(float canny_thresh, float center_thresh, vector<Point2f> &centers, vector<float> &radiuses)
+bool Image::detect4Circles(float canny_thresh, float center_thresh, vector<Point2f> &centers, vector<float> &radiuses, cv::Mat &circle_img)
 {
   vector<Vec3f> circles;
   radiuses.clear();
@@ -150,17 +152,52 @@ bool Image::detect4Circles(float canny_thresh, float center_thresh, vector<Point
 
   Mat src_gray;
   this->img.copyTo(src_gray);
-
-  for (int thresh = center_thresh; circles.size() < 4 && thresh > 10; thresh -= 5)
+   
+  Rect roi = Rect(0, 400, 964, 324);
+  
+   
+  for (int thresh = center_thresh; (circles.size() < 4 && thresh > 10); thresh -= 5)
   {
-    HoughCircles(src_gray, circles, CV_HOUGH_GRADIENT, 1, src_gray.rows / 8, canny_thresh, thresh, 0, 0);
+    float min_dist = 20; //src_gray.rows / 16;
+    HoughCircles(src_gray(roi), circles, CV_HOUGH_GRADIENT, 1, min_dist, canny_thresh, thresh, 15, 35);
   }
-
+  //namedWindow("Temp", CV_WINDOW_AUTOSIZE);
+   //imshow("Temp", src_gray(roi));
+  bool retVal;
   if (circles.size() != 4)
   {
-    return false;
-  }
+	std::cout<<"\n Number of circles: "<<circles.size();
+    //Mat src_rgb;
+   cvtColor(img, circle_img, CV_GRAY2BGR );
+   vector<Scalar> colors;
+   colors.push_back(Scalar(255,0,0));
+   colors.push_back(Scalar(0,255,0));
+   colors.push_back(Scalar(0,0,255));
+   colors.push_back(Scalar(255,255,255));
+   for (size_t i = 0; i < circles.size(); i++) {
+    centers.push_back(Point2f(circles[i][0], circles[i][1]));
 
+    Point center(cvRound(circles[i][0]), cvRound(circles[i][1]));
+    int radius = cvRound(circles[i][2]);
+
+    // circle center
+    circle(circle_img, center, 3, Scalar(0, 255, 0), -1, 8, 0);
+
+    // circle outline
+    circle(circle_img, center, radius, colors[i], 3, 8, 0);
+    cerr << i+1 << ". circle S("<<center.x<<","<<center.y<<"); r="<<radius << endl;
+   }
+   return false;
+  }
+  for (size_t i = 0; i < circles.size(); i++)
+  {
+	circles[i][0] +=900;
+	circles[i][1] +=440;
+    centers.push_back(Point2f(circles[i][0], circles[i][1]));
+    radiuses.push_back(cvRound(circles[i][2]));
+    std::cout <<"\n"<< circles[i][0] << circles[i][1] << circles[i][2];
+  }
+  
   sort(circles.begin(), circles.end(), order_Y);
   sort(circles.begin(), circles.begin() + 2, order_X);
   sort(circles.begin() + 2, circles.begin() + 4, order_X);
@@ -169,12 +206,13 @@ bool Image::detect4Circles(float canny_thresh, float center_thresh, vector<Point
   {
     centers.push_back(Point2f(circles[i][0], circles[i][1]));
     radiuses.push_back(cvRound(circles[i][2]));
+    std::cout <<"\n"<< circles[i][0] << circles[i][1] << circles[i][2];
   }
 
   /// Draw the circles detected
-  /*
-   Mat src_rgb;
-   cvtColor(img, src_rgb, CV_GRAY2BGR );
+  
+   //Mat src_rgb;
+   cvtColor(img, circle_img, CV_GRAY2BGR );
    vector<Scalar> colors;
    colors.push_back(Scalar(255,0,0));
    colors.push_back(Scalar(0,255,0));
@@ -186,15 +224,14 @@ bool Image::detect4Circles(float canny_thresh, float center_thresh, vector<Point
    Point center(cvRound(circles[i][0]), cvRound(circles[i][1]));
    int radius = cvRound(circles[i][2]);
    // circle center
-   circle(src_rgb, center, 3, Scalar(0, 255, 0), -1, 8, 0);
+   circle(circle_img, center, 3, Scalar(0, 255, 0), -1, 8, 0);
    // circle outline
-   circle(src_rgb, center, radius, colors[i], 3, 8, 0);
+   circle(circle_img, center, radius, colors[i], 3, 8, 0);
    cerr << i+1 << ". circle S("<<center.x<<","<<center.y<<"); r="<<radius << endl;
    }
-   namedWindow("Hough Circle Transform Demo", CV_WINDOW_AUTOSIZE);
-   imshow("Hough Circle Transform Demo", src_rgb);
-   waitKey(0);
-   */
+   //namedWindow("Hough Circle Transform Demo", CV_WINDOW_AUTOSIZE);
+   //imshow("Hough Circle Transform Demo", src_rgb);
+   //waitKey(0);
 
   return true;
 }

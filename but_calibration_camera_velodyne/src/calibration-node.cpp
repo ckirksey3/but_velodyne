@@ -45,6 +45,10 @@ string VELODYNE_TOPIC;
 double STRAIGHT_DISTANCE; // 23cm
 double RADIUS; // 8.25cm
 
+ros::Publisher transformed_publisher;
+ros::Publisher plane_publisher;
+ros::Publisher circle_image_publisher;
+
 Mat projection_matrix;
 Mat frame_rgb;
 Velodyne::Velodyne pointcloud;
@@ -53,7 +57,7 @@ bool doRefinement = false;
 bool writeAllInputs()
 {
   bool result = true;
-
+  ROS_INFO("Saving point cloud, image to files");
   pointcloud.save("velodyne_pc.pcd");
   cv::imwrite("frame_rgb.png", frame_rgb);
   cv::FileStorage fs_P("projection.yml", cv::FileStorage::WRITE);
@@ -63,6 +67,25 @@ bool writeAllInputs()
   return result;
 }
 
+
+void filterPCL_2(pcl::PointCloud<pcl::PointXYZI> &ipCloud, pcl::PointCloud<pcl::PointXYZI> &filteredCloud)
+{
+  ROS_INFO("Filtering point cloud");
+  size_t npoints = ipCloud.points.size();
+    //filteredCloud.points.resize(npoints);
+  for(unsigned int k = 0; k < npoints; k++)
+  {
+    if((ipCloud.at(k).x < 20) && (ipCloud.at(k).x > 0) && (ipCloud.at(k).z < 1.5) && (ipCloud.at(k).z > -1.5))
+    { 
+      filteredCloud.points.push_back(ipCloud.at(k));
+    }
+  } 
+    // pass along original time stamp and frame ID
+    filteredCloud.header.stamp = ipCloud.header.stamp;
+    filteredCloud.header.frame_id = ipCloud.header.frame_id;
+}
+
+
 Calibration6DoF calibration(bool doRefinement = false)
 {
   Mat frame_gray;
@@ -70,21 +93,43 @@ Calibration6DoF calibration(bool doRefinement = false)
 
   // Marker detection:
   Calibration3DMarker marker(frame_gray, projection_matrix, pointcloud.getPointCloud(), STRAIGHT_DISTANCE, RADIUS);
+  
+  marker.plane_ros.header.stamp = ros::Time::now();
+  marker.plane_ros.header.frame_id = "/velodyne";
+  plane_publisher.publish(marker.plane_ros); 
+  
+  
   vector<float> radii2D;
   vector<Point2f> centers2D;
   if (!marker.detectCirclesInImage(centers2D, radii2D))
   {
+  ROS_INFO(" Circles not detected in Image ");
+  circle_image_publisher.publish(marker.circles_img_msg.toImageMsg());
     return Calibration6DoF::wrong();
   }
+  else
+  {
+    ROS_INFO(" Circles detected in Image ");
+    circle_image_publisher.publish(marker.circles_img_msg.toImageMsg());
+  }
+  
   float radius2D = accumulate(radii2D.begin(), radii2D.end(), 0.0) / radii2D.size();
-
+  
+  
   vector<float> radii3D;
   vector<Point3f> centers3D;
   if (!marker.detectCirclesInPointCloud(centers3D, radii3D))
   {
+  ROS_INFO(" Circles not detected in Pointcloud ");  
     return Calibration6DoF::wrong();
   }
+  else
+  {
+    ROS_INFO(" Circles detected in Pointcloud ");
+  }
   float radius3D = accumulate(radii3D.begin(), radii3D.end(), 0.0) / radii3D.size();
+  
+
 
   // rough calibration
   Calibration6DoF translation = Calibration::findTranslation(centers2D, centers3D, projection_matrix, radius2D,
@@ -117,7 +162,7 @@ void callback(const sensor_msgs::ImageConstPtr& msg_img, const sensor_msgs::Came
   ROS_INFO_STREAM("Image received at " << msg_img->header.stamp.toSec());
   ROS_INFO_STREAM( "Camera info received at " << msg_info->header.stamp.toSec());
   ROS_INFO_STREAM( "Velodyne scan received at " << msg_pc->header.stamp.toSec());
-
+  
   // Loading camera image:
   cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(msg_img, sensor_msgs::image_encodings::BGR8);
   frame_rgb = cv_ptr->image;
@@ -131,16 +176,32 @@ void callback(const sensor_msgs::ImageConstPtr& msg_img, const sensor_msgs::Came
     pp++;
   }
   cv::Mat(3, 4, CV_32FC1, &p).copyTo(projection_matrix);
-
+  
+    
   // Loading Velodyne point cloud
+  ROS_INFO("Loading point cloud");
   PointCloud<Velodyne::Point> pc;
-  fromROSMsg(*msg_pc, pc);
+  
+  pcl::PointCloud<pcl::PointXYZI> ipCloud, filteredCloud; 
+  sensor_msgs::PointCloud2 filtered_ros_cloud;
+  
+  pcl::fromROSMsg (*msg_pc,ipCloud);
+  filterPCL_2(ipCloud, filteredCloud);
+  pcl::toROSMsg (filteredCloud, filtered_ros_cloud);
+  
+  ROS_INFO("Publishing point cloud");
+  transformed_publisher.publish(filtered_ros_cloud);
+     
+  ROS_INFO("Convert new pc from ros messg");
+  fromROSMsg(filtered_ros_cloud, pc);
 
+  ROS_INFO("Transform pc");
   // x := x, y := -z, z := y,
-  pointcloud = Velodyne::Velodyne(pc).transform(0, 0, 0, M_PI / 2, 0, 0);
-
+  pointcloud = Velodyne::Velodyne(pc).transform(0, 0, 0, -M_PI / 2, 0, 0);
+  
   // calibration:
   writeAllInputs();
+  ROS_INFO("get calibration params");
   Calibration6DoF calibrationParams = calibration(doRefinement);
   if (calibrationParams.isGood())
   {
@@ -150,8 +211,8 @@ void callback(const sensor_msgs::ImageConstPtr& msg_img, const sensor_msgs::Came
   }
   else
   {
-    ROS_WARN("Calibration failed - trying again after 5s ...");
-    ros::Duration(5).sleep();
+    ROS_WARN("Calibration failed - trying again after 1s ...");
+    ros::Duration(1).sleep();
   }
 }
 
@@ -171,14 +232,68 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;
     }
   }
-
+  bool offline;
+  
   ros::NodeHandle n;
-  n.getParam("/but_calibration_camera_velodyne/camera_frame_topic", CAMERA_FRAME_TOPIC);
-  n.getParam("/but_calibration_camera_velodyne/camera_info_topic", CAMERA_INFO_TOPIC);
-  n.getParam("/but_calibration_camera_velodyne/velodyne_topic", VELODYNE_TOPIC);
-  n.getParam("/but_calibration_camera_velodyne/marker/circles_distance", STRAIGHT_DISTANCE);
-  n.getParam("/but_calibration_camera_velodyne/marker/circles_radius", RADIUS);
+  // n.getParam("/but_calibration_camera_velodyne/camera_frame_topic", CAMERA_FRAME_TOPIC);
+  // n.getParam("/but_calibration_camera_velodyne/camera_info_topic", CAMERA_INFO_TOPIC);
+  // n.getParam("/but_calibration_camera_velodyne/velodyne_topic", VELODYNE_TOPIC);
+  // n.getParam("/but_calibration_camera_velodyne/marker/circles_distance", STRAIGHT_DISTANCE);
+  // n.getParam("/but_calibration_camera_velodyne/marker/circles_radius", RADIUS);
+  // n.getParam("/but_calibration_camera_velodyne/offline_calibration", offline);
 
+  CAMERA_FRAME_TOPIC = "/sensors/camera/image_rect_color";
+  CAMERA_INFO_TOPIC = "/sensors/camera/camera_info";
+  STRAIGHT_DISTANCE = 0.405;
+  RADIUS = 0.304;
+  VELODYNE_TOPIC = "/sensors/velodyne_points";
+  offline = false;
+  
+  transformed_publisher = n.advertise<sensor_msgs::PointCloud2>("/lidar_camera_calibration/point_cloud",1);  
+  plane_publisher = n.advertise<sensor_msgs::PointCloud2>("/lidar_camera_calibration/plane",1);  
+  circle_image_publisher = n.advertise<sensor_msgs::Image>("/lidar_camera_calibration/circles_image",1); 
+    
+  if (offline)
+  {
+    ROS_INFO("Offline Mode");
+     // image_transport::ImageTransport it(n);
+      //image_transport::Publisher pub = it.advertise("camera/image", 1);
+    sensor_msgs::PointCloud2 pcl_msg;
+    pcl::io::loadPCDFile("velodyne_pc.pcd", pcl_msg);
+    pcl_msg.header.stamp = ros::Time::now();
+    pcl_msg.header.frame_id = "/velodyne";
+    sensor_msgs::PointCloud2ConstPtr pcl_ptr = sensor_msgs::PointCloud2ConstPtr (&pcl_msg);
+  
+    cv::Mat image = cv::imread("frame_rgb.png", CV_LOAD_IMAGE_COLOR);
+    cv_bridge::CvImage img_msg;
+    img_msg.header.stamp = ros::Time::now();
+    img_msg.header.frame_id = "/camera";
+    img_msg.encoding = sensor_msgs::image_encodings::BGR8;
+    img_msg.image = image;
+    
+    sensor_msgs::CameraInfo camera_info;
+    camera_info.header = img_msg.header;
+    camera_info.height = 1448;
+    camera_info.width = 1928;
+    camera_info.distortion_model = "plumb_bob";
+    double distortion[] = {-0.1743330744813683, 0.03844085133381333, -0.000440382483744044, 0.0001904752615392291, 0};
+    std::vector<double> temp (distortion, distortion + sizeof(distortion)/sizeof(double));
+    camera_info.D = temp;
+    camera_info.K = {934.7580051348723, 0, 941.5324993504246, 0, 937.0009750408727, 721.1446607992325, 0, 0, 1};
+    camera_info.R = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+    camera_info.P = {766.831298828125, 0, 936.3543676629779, 0, 0, 833.7805786132812, 718.78976712035, 0, 0, 0, 1, 0};
+    sensor_msgs::CameraInfoConstPtr info_ptr = sensor_msgs::CameraInfoConstPtr (&camera_info);
+            
+    ros::Rate loop_rate(5);
+    while(n.ok())
+    {
+    callback(img_msg.toImageMsg(), info_ptr, pcl_ptr);
+    ros::spinOnce();
+    loop_rate.sleep();
+  }
+  }
+  else
+  {   
   message_filters::Subscriber<sensor_msgs::Image> image_sub(n, CAMERA_FRAME_TOPIC, 1);
   message_filters::Subscriber<sensor_msgs::CameraInfo> info_sub(n, CAMERA_INFO_TOPIC, 1);
   message_filters::Subscriber<sensor_msgs::PointCloud2> cloud_sub(n, VELODYNE_TOPIC, 1);
@@ -186,8 +301,11 @@ int main(int argc, char** argv)
   typedef sync_policies::ApproximateTime<sensor_msgs::Image, sensor_msgs::CameraInfo, sensor_msgs::PointCloud2> MySyncPolicy;
   Synchronizer<MySyncPolicy> sync(MySyncPolicy(10), image_sub, info_sub, cloud_sub);
   sync.registerCallback(boost::bind(&callback, _1, _2, _3));
-
+ 
+  std::cout << "\n Waiting for Topics = ";
+  ROS_INFO("TEST: Waiting for topics...");
   ros::spin();
-
+  }
+  
   return EXIT_SUCCESS;
 }

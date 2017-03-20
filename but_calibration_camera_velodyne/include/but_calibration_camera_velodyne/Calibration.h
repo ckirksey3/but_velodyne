@@ -12,6 +12,7 @@
 #include <but_calibration_camera_velodyne/Velodyne.h>
 #include <but_calibration_camera_velodyne/Similarity.h>
 
+
 namespace but_calibration_camera_velodyne
 {
 
@@ -160,7 +161,7 @@ public:
     float focal_len = projection.at<float>(0, 0);
 
     // t_z:
-    translation[INDEX::Z] = radius3D * focal_len / radius2D - velodyne.front().z;
+    translation[Z] = radius3D * focal_len / radius2D - velodyne.front().z;
 
     float principal_x = projection.at<float>(0, 2);
     float principal_y = projection.at<float>(1, 2);
@@ -168,17 +169,17 @@ public:
     for (size_t i = 0; i < image.size(); i++)
     {
       // t_x:
-      translation[INDEX::X] += (image[i].x - principal_x) * (velodyne[i].z + translation[INDEX::Z]) / focal_len
+      translation[X] += (image[i].x - principal_x) * (velodyne[i].z + translation[Z]) / focal_len
           - velodyne[i].x;
       // t_y:
-      translation[INDEX::Y] += (image[i].y - principal_y) * (velodyne[i].z + translation[INDEX::Z]) / focal_len
+      translation[Y] += (image[i].y - principal_y) * (velodyne[i].z + translation[Z]) / focal_len
           - velodyne[i].y;
     }
-    translation[INDEX::X] /= image.size();
-    translation[INDEX::Y] /= image.size();
+    translation[X] /= image.size();
+    translation[Y] /= image.size();
 
     // no rotation and value of calibration
-    return Calibration6DoF(translation[INDEX::X], translation[INDEX::Y], translation[INDEX::Z], 0, 0, 0, 0);
+    return Calibration6DoF(translation[X], translation[Y], translation[Z], 0, 0, 0, 0);
   }
 
   static void calibrationRefinement(Image::Image img, Velodyne::Velodyne scan, cv::Mat P, float x_rough, float y_rough,

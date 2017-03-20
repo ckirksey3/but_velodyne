@@ -30,6 +30,9 @@ msg/_.*\.py$
 .project
 .cproject
 
+# vs code
+.vscode/
+
 # qcreator stuff
 CMakeLists.txt.user
 
