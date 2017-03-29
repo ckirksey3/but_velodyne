@@ -9,7 +9,9 @@
 
 #include <ros/assert.h>
 #include <pcl/point_cloud.h>
+#include <pcl/filters/extract_indices.h>
 #include <pcl_conversions/pcl_conversions.h>
+#include <but_calibration_camera_velodyne/Velodyne.h>
 
 using namespace std;
 using namespace cv;
@@ -25,6 +27,7 @@ Calibration3DMarker::Calibration3DMarker(cv::Mat _frame_gray, cv::Mat _P, ::Poin
 
   // ---------------- GET PLANE ----------------
 
+  ROS_INFO("Initializing calibration marker");
   Velodyne::Velodyne scan(pc);
   scan.getRings();
   scan.intensityByRangeDiff();
@@ -35,6 +38,7 @@ Calibration3DMarker::Calibration3DMarker(cv::Mat _frame_gray, cv::Mat _P, ::Poin
   visible_scan.normalizeIntensity();
   Velodyne::Velodyne thresholded_scan = visible_scan.threshold(0); //0.1
 
+  ROS_INFO("Building xyz_cloud_ptr");
   PointCloud<PointXYZ>::Ptr xyz_cloud_ptr(thresholded_scan.toPointsXYZ());
 
   SampleConsensusModelPlane<PointXYZ>::Ptr model_p(
@@ -42,35 +46,87 @@ Calibration3DMarker::Calibration3DMarker(cv::Mat _frame_gray, cv::Mat _P, ::Poin
   RandomSampleConsensus<PointXYZ> ransac(model_p);
   ransac.setDistanceThreshold(0.1); //0.05
   ransac.computeModel();
-
   std::vector<int> inliers_indicies;
   ransac.getInliers(inliers_indicies);
+
+  //Move indices into pcl object
+  pcl::PointIndices::Ptr inliers (new pcl::PointIndices ());
+  inliers->indices = inliers_indicies;
+
+  // Filter out largest plane
+  ROS_INFO("Building cloud_filter");
+  PointCloud<PointXYZ>::Ptr cloud_filter(thresholded_scan.toPointsXYZ());
+
+  printf( "inlier size %d\n", inliers_indicies.size() );
+  printf( "cloud_filter size %d\n", cloud_filter->size() );
+
+  ROS_INFO("Building cloud_p");
+  PointCloud<PointXYZ>::Ptr cloud_p(new pcl::PointCloud<pcl::PointXYZ>);
+  pcl::ExtractIndices<pcl::PointXYZ> extract;
+  extract.setInputCloud (cloud_filter);
+  extract.setIndices (inliers);
+  extract.setNegative (true);
+  extract.filter (*cloud_p);
+
+  // Filter out second largest plane
+  SampleConsensusModelPlane<PointXYZ>::Ptr model_p2(
+    new ::SampleConsensusModelPlane<PointXYZ>(cloud_p));
+  RandomSampleConsensus<PointXYZ> ransac2(model_p2);
+  ransac2.setDistanceThreshold(0.1); //0.05
+  ransac2.computeModel();
+  std::vector<int> inliers_indicies2;
+  ransac2.getInliers(inliers_indicies2);
+
+  pcl::PointIndices::Ptr inliers2 (new pcl::PointIndices ());
+  inliers2->indices = inliers_indicies2;
+
+  printf( "inlier2 size %d\n", inliers_indicies2.size() );
+  printf( "cloud_p size %d\n", cloud_p->size() );
+
+  PointCloud<PointXYZ>::Ptr cloud_board(new pcl::PointCloud<pcl::PointXYZ>);
+  ROS_INFO("Filtering out second plane");
+  pcl::ExtractIndices<pcl::PointXYZ> extract_board;
+  extract_board.setInputCloud (cloud_p);
+  extract_board.setIndices (inliers2);
+  extract_board.filter (*cloud_board);
+
+  // Publish cloud without plane
+  ros::Publisher filtered_plane_publisher;
+  sensor_msgs::PointCloud2 filtered_plane_ros;
+  ros::NodeHandle n;
+  ROS_INFO("Publishing filtered point cloud");
+  filtered_plane_publisher = n.advertise<sensor_msgs::PointCloud2>("/lidar_camera_calibration/filtered_plane",1);  
+  pcl::toROSMsg(*cloud_filter, filtered_plane_ros);
+  filtered_plane_publisher.publish(filtered_plane_ros); 
+
+  pcl::ModelCoefficients::Ptr coefficients( new pcl::ModelCoefficients() );
 
   copyPointCloud<PointXYZ>(*xyz_cloud_ptr, inliers_indicies, plane);
 
   // ---------------- REMOVE LINES ----------------
 
-  for (int i = 0; i < 2; i++)
-  {
-    PointCloud<PointXYZ>::Ptr plane_ptr(new PointCloud<PointXYZ>(plane));
-    SampleConsensusModelLine<PointXYZ>::Ptr model_l(
-        new SampleConsensusModelLine<PointXYZ>(plane_ptr));
-    RandomSampleConsensus<PointXYZ> ransac_l(model_l);
-    ransac_l.setDistanceThreshold(0.05); //0.02
-    ransac_l.computeModel();
-    vector<int> line_inliers;
-    ransac_l.getInliers(line_inliers);
-    if (line_inliers.empty())
-    {
-	  ROS_INFO(" Lines not detected ");	
-      continue;
-    }
-    PointCloud<PointXYZ> plane_no_line;
-    remove_inliers(*plane_ptr, line_inliers, plane_no_line);
-    plane = plane_no_line;
+  // for (int i = 0; i < 2; i++)
+  // {
+  //   PointCloud<PointXYZ>::Ptr plane_ptr(new PointCloud<PointXYZ>(plane));
+  //   SampleConsensusModelLine<PointXYZ>::Ptr model_l(
+  //       new SampleConsensusModelLine<PointXYZ>(plane_ptr));
+  //   RandomSampleConsensus<PointXYZ> ransac_l(model_l);
+  //   ransac_l.setDistanceThreshold(0.05); //0.02
+  //   ransac_l.computeModel();
+  //   vector<int> line_inliers;
+  //   ransac_l.getInliers(line_inliers);
+  //   if (line_inliers.empty())
+  //   {
+	//     ROS_INFO(" Lines not detected ");	
+  //     continue;
+  //   }
+  //   PointCloud<PointXYZ> plane_no_line;
+  //   remove_inliers(*plane_ptr, line_inliers, plane_no_line);
+  //   plane = plane_no_line;
     
-  }
-  pcl::toROSMsg(plane,plane_ros);
+  // }
+  // pcl::toROSMsg(plane,plane_ros);
+  pcl::toROSMsg(*cloud_board,plane_ros);
 }
 
 bool Calibration3DMarker::detectCirclesInImage(vector<Point2f> &centers, vector<float> &radiuses)
@@ -81,12 +137,12 @@ bool Calibration3DMarker::detectCirclesInImage(vector<Point2f> &centers, vector<
   bool retVal = img_edge.detect4Circles(Calibration3DMarker::CANNY_THRESH, Calibration3DMarker::CENTER_THRESH_DISTANCE,
                                  centers, radiuses, circle_img);
                                  
-   circles_img_msg.header.stamp = ros::Time::now();
-   circles_img_msg.header.frame_id = "/camera";
-   circles_img_msg.encoding = sensor_msgs::image_encodings::BGR8;
-   circles_img_msg.image = circle_img;
-   cv::imwrite("frame_rgb_with_circles.png", circle_img);
-   return retVal;                            
+  circles_img_msg.header.stamp = ros::Time::now();
+  circles_img_msg.header.frame_id = "/camera";
+  circles_img_msg.encoding = sensor_msgs::image_encodings::BGR8;
+  circles_img_msg.image = circle_img;
+  cv::imwrite("frame_rgb_with_circles.png", circle_img);
+  return retVal;                            
 }
 
 
@@ -102,9 +158,9 @@ bool Calibration3DMarker::detectCirclesInPointCloud(vector<Point3f> &centers, ve
   std::cout << "\n Cloud Size = "<<detection_cloud->size();
   for (int iterations = 0; iterations < 64; iterations++)
   {
-   /* cerr << endl << " =========== ROUND " << round++ << " =========== "
-     << endl << endl;
-     cerr << "detection_cloud size: " << detection_cloud->size() << endl;*/
+    /* cerr << endl << " =========== ROUND " << round++ << " =========== "
+    << endl << endl;
+    cerr << "detection_cloud size: " << detection_cloud->size() << endl;*/
     spheres_centers = detect4spheres(detection_cloud, radiuses);
     
     //ROS_INFO_STREAM("Spheres Detected = " << spheres_centers.size());
@@ -212,7 +268,8 @@ vector<PointXYZ> Calibration3DMarker::detect4spheres(PointCloud<PointXYZ>::Ptr p
   {
     SampleConsensusModelSphere<PointXYZ>::Ptr model_s(
         new SampleConsensusModelSphere<PointXYZ>(plane));
-    model_s->setRadiusLimits(0.29, 0.40);
+    // model_s->setRadiusLimits(0.29, 0.40);
+    model_s->setRadiusLimits(0.1, 0.2);
     RandomSampleConsensus<PointXYZ> ransac_sphere(model_s);
     ransac_sphere.setDistanceThreshold(tolerance);
     ransac_sphere.computeModel();
@@ -221,13 +278,13 @@ vector<PointXYZ> Calibration3DMarker::detect4spheres(PointCloud<PointXYZ>::Ptr p
 
     if (inliers_indicies.size() == 0)
     {
-	  //std::cout<<"\n Sphere not detected in iteration: "<<i;
+	    std::cout<<"\n Sphere not detected in iteration: "<<i;
       continue;
     }
     else
     {
-		//std::cout<<"\n Sphere detected in iteration: "<<i;
-	}
+		  std::cout<<"\n Sphere detected in iteration: "<<i;
+	  }
     Eigen::VectorXf coeficients;
     ransac_sphere.getModelCoefficients(coeficients);
     //cerr << i + 1 << ". circle: " << coeficients << endl << endl;
@@ -237,7 +294,7 @@ vector<PointXYZ> Calibration3DMarker::detect4spheres(PointCloud<PointXYZ>::Ptr p
     remove_inliers<PointXYZ>(*plane, inliers_indicies, *outliers);
     copyPointCloud<PointXYZ>(*plane, inliers_indicies, *inliers);
     plane = outliers;
-    //view(plane);
+    // view(plane);
 
     *four_spheres += *inliers;
     PointXYZ middle(coeficients(0), coeficients(1), coeficients(2));

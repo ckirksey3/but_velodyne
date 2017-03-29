@@ -153,7 +153,7 @@ bool Image::detect4Circles(float canny_thresh, float center_thresh, vector<Point
   Mat src_gray;
   this->img.copyTo(src_gray);
    
-  Rect roi = Rect(0, 400, 964, 324);
+  Rect roi = Rect(400, 200, 300, 275);
   
    
   for (int thresh = center_thresh; (circles.size() < 4 && thresh > 10); thresh -= 5)
@@ -163,10 +163,30 @@ bool Image::detect4Circles(float canny_thresh, float center_thresh, vector<Point
   }
   //namedWindow("Temp", CV_WINDOW_AUTOSIZE);
    //imshow("Temp", src_gray(roi));
-  bool retVal;
-  if (circles.size() != 4)
+
+  //Filter circles that are inside of each other
+  for (size_t i = 0; i < circles.size(); i++)
   {
-	std::cout<<"\n Number of circles: "<<circles.size();
+    Point cur_center(cvRound(circles[i][0]), cvRound(circles[i][1]));
+    double radius = circles[i][2];
+    for (size_t j = 0; j < circles.size(); j++)
+    {
+      if(i != j) {
+        Point cur_check(cvRound(circles[j][0]), cvRound(circles[j][1]));
+        double distance = cv::norm(cur_center-cur_check);
+        if(distance < radius) {
+          // Remove the circle from the list
+          circles.erase(std::remove(circles.begin(), circles.end(), circles[j]), circles.end());
+        }
+      }
+    } 
+  }
+
+
+  bool retVal;
+  if (circles.size() < 4)
+  {
+	  std::cout<<"\n Number of circles: "<<circles.size();
     //Mat src_rgb;
    cvtColor(img, circle_img, CV_GRAY2BGR );
    vector<Scalar> colors;
@@ -177,7 +197,7 @@ bool Image::detect4Circles(float canny_thresh, float center_thresh, vector<Point
    for (size_t i = 0; i < circles.size(); i++) {
     centers.push_back(Point2f(circles[i][0], circles[i][1]));
 
-    Point center(cvRound(circles[i][0]), cvRound(circles[i][1]));
+    Point center(cvRound(circles[i][0] + roi.x), cvRound(circles[i][1] + roi.y));
     int radius = cvRound(circles[i][2]);
 
     // circle center
@@ -187,12 +207,19 @@ bool Image::detect4Circles(float canny_thresh, float center_thresh, vector<Point
     circle(circle_img, center, radius, colors[i], 3, 8, 0);
     cerr << i+1 << ". circle S("<<center.x<<","<<center.y<<"); r="<<radius << endl;
    }
-   return false;
+    return false;
   }
+  
+  //remove the last circles to get down to 4
+  for (size_t j = 4; j < circles.size(); j++)
+  {
+    circles.erase(std::remove(circles.begin(), circles.end(), circles[j]), circles.end());
+  } 
+  
   for (size_t i = 0; i < circles.size(); i++)
   {
-	circles[i][0] +=900;
-	circles[i][1] +=440;
+    circles[i][0] += roi.x;
+    circles[i][1] += roi.y;
     centers.push_back(Point2f(circles[i][0], circles[i][1]));
     radiuses.push_back(cvRound(circles[i][2]));
     std::cout <<"\n"<< circles[i][0] << circles[i][1] << circles[i][2];
@@ -210,8 +237,6 @@ bool Image::detect4Circles(float canny_thresh, float center_thresh, vector<Point
   }
 
   /// Draw the circles detected
-  
-   //Mat src_rgb;
    cvtColor(img, circle_img, CV_GRAY2BGR );
    vector<Scalar> colors;
    colors.push_back(Scalar(255,0,0));
@@ -219,19 +244,16 @@ bool Image::detect4Circles(float canny_thresh, float center_thresh, vector<Point
    colors.push_back(Scalar(0,0,255));
    colors.push_back(Scalar(255,255,255));
    for (size_t i = 0; i < circles.size(); i++) {
-   centers.push_back(Point2f(circles[i][0], circles[i][1]));
+    centers.push_back(Point2f(circles[i][0], circles[i][1]));
 
-   Point center(cvRound(circles[i][0]), cvRound(circles[i][1]));
-   int radius = cvRound(circles[i][2]);
-   // circle center
-   circle(circle_img, center, 3, Scalar(0, 255, 0), -1, 8, 0);
-   // circle outline
-   circle(circle_img, center, radius, colors[i], 3, 8, 0);
-   cerr << i+1 << ". circle S("<<center.x<<","<<center.y<<"); r="<<radius << endl;
+    Point center(cvRound(circles[i][0]), cvRound(circles[i][1]));
+    int radius = cvRound(circles[i][2]);
+    // circle center
+    circle(circle_img, center, 3, Scalar(0, 255, 0), -1, 8, 0);
+    // circle outline
+    circle(circle_img, center, radius, colors[i], 3, 8, 0);
+    cerr << i+1 << ". circle S("<<center.x<<","<<center.y<<"); r="<<radius << endl;
    }
-   //namedWindow("Hough Circle Transform Demo", CV_WINDOW_AUTOSIZE);
-   //imshow("Hough Circle Transform Demo", src_rgb);
-   //waitKey(0);
 
   return true;
 }

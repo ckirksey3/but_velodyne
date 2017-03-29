@@ -13,6 +13,7 @@
 #include <sensor_msgs/Image.h>
 #include <sensor_msgs/CameraInfo.h>
 #include <camera_info_manager/camera_info_manager.h>
+#include <std_msgs/Header.h>
 
 #include <message_filters/subscriber.h>
 #include <message_filters/synchronizer.h>
@@ -86,7 +87,7 @@ void filterPCL_2(pcl::PointCloud<pcl::PointXYZI> &ipCloud, pcl::PointCloud<pcl::
 }
 
 
-Calibration6DoF calibration(bool doRefinement = false)
+Calibration6DoF calibration(bool doRefinement, std_msgs::Header header)
 {
   Mat frame_gray;
   cvtColor(frame_rgb, frame_gray, CV_BGR2GRAY);
@@ -94,8 +95,9 @@ Calibration6DoF calibration(bool doRefinement = false)
   // Marker detection:
   Calibration3DMarker marker(frame_gray, projection_matrix, pointcloud.getPointCloud(), STRAIGHT_DISTANCE, RADIUS);
   
-  marker.plane_ros.header.stamp = ros::Time::now();
-  marker.plane_ros.header.frame_id = "/velodyne";
+  // marker.plane_ros.header.stamp = ros::Time::now();
+  // marker.plane_ros.header.frame_id = "/velodyne";
+  marker.plane_ros.header = header;
   plane_publisher.publish(marker.plane_ros); 
   
   
@@ -103,8 +105,8 @@ Calibration6DoF calibration(bool doRefinement = false)
   vector<Point2f> centers2D;
   if (!marker.detectCirclesInImage(centers2D, radii2D))
   {
-  ROS_INFO(" Circles not detected in Image ");
-  circle_image_publisher.publish(marker.circles_img_msg.toImageMsg());
+    ROS_INFO(" Circles not detected in Image ");
+    circle_image_publisher.publish(marker.circles_img_msg.toImageMsg());
     return Calibration6DoF::wrong();
   }
   else
@@ -120,7 +122,7 @@ Calibration6DoF calibration(bool doRefinement = false)
   vector<Point3f> centers3D;
   if (!marker.detectCirclesInPointCloud(centers3D, radii3D))
   {
-  ROS_INFO(" Circles not detected in Pointcloud ");  
+    ROS_INFO(" Circles not detected in Pointcloud ");  
     return Calibration6DoF::wrong();
   }
   else
@@ -177,7 +179,11 @@ void callback(const sensor_msgs::ImageConstPtr& msg_img, const sensor_msgs::Came
   }
   cv::Mat(3, 4, CV_32FC1, &p).copyTo(projection_matrix);
   
-    
+  // string ros_message;
+  // ros_message << "Projection matrix = "<< endl << " "  << projection_matrix << endl << endl;
+  ROS_INFO("Projection matrix:");
+  ROS_INFO_STREAM(projection_matrix);
+
   // Loading Velodyne point cloud
   ROS_INFO("Loading point cloud");
   PointCloud<Velodyne::Point> pc;
@@ -193,16 +199,17 @@ void callback(const sensor_msgs::ImageConstPtr& msg_img, const sensor_msgs::Came
   transformed_publisher.publish(filtered_ros_cloud);
      
   ROS_INFO("Convert new pc from ros messg");
-  fromROSMsg(filtered_ros_cloud, pc);
+  pcl::fromROSMsg(filtered_ros_cloud, pc);
 
-  ROS_INFO("Transform pc");
+  // ROS_INFO("Transform pc");
   // x := x, y := -z, z := y,
-  pointcloud = Velodyne::Velodyne(pc).transform(0, 0, 0, -M_PI / 2, 0, 0);
+  pointcloud = Velodyne::Velodyne(pc).transform(0, 0, 0, -M_PI/2, -M_PI/2, M_PI/2);
+  // pointcloud = Velodyne::Velodyne(pc);
   
   // calibration:
   writeAllInputs();
   ROS_INFO("get calibration params");
-  Calibration6DoF calibrationParams = calibration(doRefinement);
+  Calibration6DoF calibrationParams = calibration(doRefinement, msg_pc->header);
   if (calibrationParams.isGood())
   {
     ROS_INFO_STREAM("Calibration succeeded, found parameters:");
@@ -212,7 +219,7 @@ void callback(const sensor_msgs::ImageConstPtr& msg_img, const sensor_msgs::Came
   else
   {
     ROS_WARN("Calibration failed - trying again after 1s ...");
-    ros::Duration(1).sleep();
+    ros::Duration(10).sleep();
   }
 }
 
@@ -244,8 +251,9 @@ int main(int argc, char** argv)
 
   CAMERA_FRAME_TOPIC = "/sensors/camera/image_rect_color";
   CAMERA_INFO_TOPIC = "/sensors/camera/camera_info";
-  STRAIGHT_DISTANCE = 0.405;
-  RADIUS = 0.304;
+  //TODO adjust these
+  STRAIGHT_DISTANCE = 0.45;
+  RADIUS = 0.15;
   VELODYNE_TOPIC = "/sensors/velodyne_points";
   offline = false;
   
